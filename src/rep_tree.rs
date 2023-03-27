@@ -6,12 +6,12 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn from_render(render: impl Render + PartialEq + 'static) -> Self {
+    pub fn from_render(render: impl Render + PartialEq + Clone + 'static) -> Self {
         render.on_mount();
 
-        let rep = render.render();
+        let rep = render.box_clone().render();
         let view = View {
-            render: Arc::new(render),
+            render: Box::new(render),
         };
         let mut children = vec![];
         update_children(&mut children, rep);
@@ -19,24 +19,23 @@ impl Node {
         Self { view, children }
     }
 
-    pub fn update(&mut self, render: impl Render + PartialEq + 'static) {
+    pub fn update(&mut self, render: impl Render + PartialEq + Clone + 'static) {
         if self.view.render.as_any().downcast_ref() == Some(&render) {
+            println!(" # same props");
             return;
         }
 
-        if self.view.render.type_id() != render.type_id() {
-            println!(
-                "self.view.render.type_id() {:?}",
-                self.view.render.type_id()
-            );
-            println!("render.type_id() {:?}", render.type_id());
+        if self.view.render.as_any().type_id() != render.type_id() {
+            println!(" # different type id");
             render.on_mount();
         }
 
-        let rep = render.render();
+        println!(" # same type id update props");
+
+        let rep = render.box_clone().render();
 
         self.view = View {
-            render: Arc::new(render),
+            render: Box::new(render),
         };
 
         update_children(&mut self.children, rep);
@@ -45,15 +44,15 @@ impl Node {
     fn from_view(view: View) -> Self {
         view.render.on_mount();
 
-        let children = rep_to_children(view.render.render());
+        let children = rep_to_children(view.render.box_clone().render());
 
         Self { view, children }
     }
 
     fn update_by_view(&mut self, view: View) {
-        if Arc::ptr_eq(&self.view.render, &view.render) {
-            return;
-        }
+        // if self.view.render.as_any().downcast_ref() == view.render.as_any().downcast_ref() {
+        //     return;
+        // }
 
         if self.view.render.as_any().type_id() != view.render.as_any().type_id() {
             println!(
@@ -64,7 +63,7 @@ impl Node {
             view.render.on_mount();
         }
 
-        let rep = view.render.render();
+        let rep = view.render.box_clone().render();
 
         self.view = view;
 
