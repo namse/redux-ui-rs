@@ -1,13 +1,13 @@
+mod reduce;
 mod rep_tree;
 
+use reduce::Reduce;
 use std::{
     any::Any,
-    backtrace::Backtrace,
     sync::{Arc, Mutex},
 };
 
 fn main() {
-    println!("Hello, world!");
     let app_state = TodoAppState {
         text_input: text_input::State::new(),
         todos: TodoState { todos: vec![] },
@@ -31,18 +31,21 @@ fn main() {
     })
 }
 
-fn run<State: Reduce, View: Render + 'static>(mut state: State, to_view: impl Fn(&State) -> View) {
+fn run<State: Reduce, View: Render + PartialEq + 'static>(
+    mut state: State,
+    to_view: impl Fn(&State) -> View,
+) {
     let mut rep_tree: Option<rep_tree::Node> = None;
     for _ in 0..3 {
         let view = to_view(&state);
-        update_view(&mut rep_tree, Box::new(view));
+        update_view(&mut rep_tree, view);
 
         let event = get_event();
         state = state.reduce(event.as_ref());
     }
 }
 
-fn update_view(rep_tree: &mut Option<rep_tree::Node>, view: Box<dyn Render>) {
+fn update_view(rep_tree: &mut Option<rep_tree::Node>, view: impl Render + PartialEq + 'static) {
     match rep_tree.as_mut() {
         Some(rep_tree) => {
             rep_tree.update(view);
@@ -51,21 +54,6 @@ fn update_view(rep_tree: &mut Option<rep_tree::Node>, view: Box<dyn Render>) {
             *rep_tree = Some(rep_tree::Node::from_render(view));
         }
     }
-    // if let Some(last_view) = &last_view {
-    //     if last_view.downcast_ref() == Some(&view) {
-    //         return;
-    //     }
-    // }
-
-    // // TODO
-    // let is_mounting = Some(view.type_id()) != last_view.as_ref().map(|view| view.type_id());
-    // if is_mounting {
-    //     view.on_mount();
-    // }
-
-    // *last_view = Some(Box::new(view.clone()));
-    // let element = view.render();
-    // draw_element(element);
 }
 
 fn get_event() -> Box<dyn std::any::Any> {
@@ -74,25 +62,48 @@ fn get_event() -> Box<dyn std::any::Any> {
     })
 }
 
-fn draw_element(element: Rep) {
-    todo!()
-}
-
-trait Reduce {
-    fn reduce(self, event: &dyn std::any::Any) -> Self;
-}
-
 #[derive(Clone)]
 pub struct Rep {
     views: Vec<View>,
 }
 
-pub trait Render {
+pub trait Render: AnyEqual + BoxClone {
     fn render(&self) -> Rep;
     fn on_mount(&self) {}
     fn on_unmount(&self) {}
-    fn eq(&self, other: &dyn Any) -> bool;
-    fn clone_box(&self) -> Box<dyn Render>;
+}
+
+pub trait AnyEqual {
+    // An &Any can be cast to a reference to a concrete type.
+    fn as_any(&self) -> &dyn Any;
+
+    // Perform the test.
+    fn equals(&self, _: &dyn AnyEqual) -> bool;
+}
+
+impl<S: 'static + PartialEq> AnyEqual for S {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn equals(&self, other: &dyn AnyEqual) -> bool {
+        // Do a type-safe casting. If the types are different,
+        // return false, otherwise test the values for equality.
+        other
+            .as_any()
+            .downcast_ref::<S>()
+            .map_or(false, |a| self == a)
+    }
+}
+
+pub trait BoxClone {
+    fn box_clone(&self) -> Box<dyn Render>;
+}
+
+impl<S: 'static + Clone + Render> BoxClone for S {
+    fn box_clone(&self) -> Box<dyn Render> {
+        Box::new(self.clone())
+    }
 }
 
 fn div(children: Vec<View>) -> Rep {
@@ -125,17 +136,20 @@ thread_local! {
     static VIEW_CACHE: Mutex<Vec<View>> = Mutex::new(Vec::new());
 }
 
-fn view<R: Render + 'static>(render: R) -> View {
+fn view<R: Render + PartialEq + 'static>(render: R) -> View {
     VIEW_CACHE.with(move |cache| {
         let mut cache = cache.lock().unwrap();
-        match cache.iter().find(|cached| cached.render.eq(&render)) {
+        match cache
+            .iter()
+            .find(|cached| cached.render.as_any().downcast_ref() == Some(&render))
+        {
             Some(cached) => {
                 let view = cached.clone();
                 view
             }
             None => {
                 let view = View {
-                    render: render.clone_box(),
+                    render: Arc::new(render),
                 };
 
                 cache.push(view.clone());
@@ -146,16 +160,9 @@ fn view<R: Render + 'static>(render: R) -> View {
     })
 }
 
+#[derive(Clone)]
 pub struct View {
-    render: Box<dyn Render>,
-}
-
-impl Clone for View {
-    fn clone(&self) -> Self {
-        Self {
-            render: self.render.clone_box(),
-        }
-    }
+    render: Arc<dyn Render>,
 }
 
 #[derive(PartialEq, Clone)]
@@ -224,17 +231,13 @@ mod text_input {
         fn render(&self) -> Rep {
             div(vec![])
         }
-        fn eq(&self, other: &dyn Any) -> bool {
-            if let Some(other) = other.downcast_ref::<Self>() {
-                self == other
-            } else {
-                false
-            }
-        }
-
-        fn clone_box(&self) -> Box<dyn Render> {
-            Box::new(self.clone())
-        }
+        // fn eq(&self, other: &dyn Any) -> bool {
+        //     if let Some(other) = other.downcast_ref::<Self>() {
+        //         self == other
+        //     } else {
+        //         false
+        //     }
+        // }
     }
 }
 
@@ -292,17 +295,13 @@ impl Render for TodoAppView {
     fn on_unmount(&self) {
         println!("TodoAppView unmounted");
     }
-    fn eq(&self, other: &dyn Any) -> bool {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            self == other
-        } else {
-            false
-        }
-    }
-
-    fn clone_box(&self) -> Box<dyn Render> {
-        Box::new(self.clone())
-    }
+    // fn eq(&self, other: &dyn Any) -> bool {
+    //     if let Some(other) = other.downcast_ref::<Self>() {
+    //         self == other
+    //     } else {
+    //         false
+    //     }
+    // }
 }
 #[derive(PartialEq, Clone)]
 struct TodoListView {
@@ -325,22 +324,18 @@ impl Render for TodoListView {
 
         div(elements)
     }
-    fn eq(&self, other: &dyn Any) -> bool {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            self == other
-        } else {
-            false
-        }
-    }
+    // fn eq(&self, other: &dyn Any) -> bool {
+    //     if let Some(other) = other.downcast_ref::<Self>() {
+    //         self == other
+    //     } else {
+    //         false
+    //     }
+    // }
     fn on_mount(&self) {
         println!("TodoListView mounted");
     }
     fn on_unmount(&self) {
         println!("TodoListView unmounted");
-    }
-
-    fn clone_box(&self) -> Box<dyn Render> {
-        Box::new(self.clone())
     }
 }
 
@@ -367,16 +362,13 @@ impl Render for TodoView {
         println!("TodoView unmounted");
     }
 
-    fn eq(&self, other: &dyn Any) -> bool {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            self == other
-        } else {
-            false
-        }
-    }
-    fn clone_box(&self) -> Box<dyn Render> {
-        Box::new(self.clone())
-    }
+    // fn eq(&self, other: &dyn Any) -> bool {
+    //     if let Some(other) = other.downcast_ref::<Self>() {
+    //         self == other
+    //     } else {
+    //         false
+    //     }
+    // }
 }
 
 fn text(text: impl ToString) -> Rep {
@@ -415,17 +407,13 @@ impl Render for VisibilityFilterView {
     fn render(&self) -> Rep {
         div(vec![])
     }
-    fn eq(&self, other: &dyn Any) -> bool {
-        if let Some(other) = other.downcast_ref::<Self>() {
-            self == other
-        } else {
-            false
-        }
-    }
-
-    fn clone_box(&self) -> Box<dyn Render> {
-        Box::new(self.clone())
-    }
+    // fn eq(&self, other: &dyn Any) -> bool {
+    //     if let Some(other) = other.downcast_ref::<Self>() {
+    //         self == other
+    //     } else {
+    //         false
+    //     }
+    // }
 }
 
 #[derive(Clone, Copy, PartialEq)]

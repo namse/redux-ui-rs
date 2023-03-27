@@ -6,19 +6,21 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn from_render(render: Box<dyn Render>) -> Self {
+    pub fn from_render(render: impl Render + PartialEq + 'static) -> Self {
         render.on_mount();
 
-        let rep = render.clone_box().render();
-        let view = View { render };
+        let rep = render.render();
+        let view = View {
+            render: Arc::new(render),
+        };
         let mut children = vec![];
         update_children(&mut children, rep);
 
         Self { view, children }
     }
 
-    pub fn update(&mut self, render: Box<dyn Render>) {
-        if self.view.render.eq(&render) {
+    pub fn update(&mut self, render: impl Render + PartialEq + 'static) {
+        if self.view.render.as_any().downcast_ref() == Some(&render) {
             return;
         }
 
@@ -33,7 +35,9 @@ impl Node {
 
         let rep = render.render();
 
-        self.view = View { render };
+        self.view = View {
+            render: Arc::new(render),
+        };
 
         update_children(&mut self.children, rep);
     }
@@ -45,6 +49,27 @@ impl Node {
 
         Self { view, children }
     }
+
+    fn update_by_view(&mut self, view: View) {
+        if Arc::ptr_eq(&self.view.render, &view.render) {
+            return;
+        }
+
+        if self.view.render.as_any().type_id() != view.render.as_any().type_id() {
+            println!(
+                "self.view.render.type_id() {:?}",
+                self.view.render.type_id()
+            );
+            println!("view.render.type_id() {:?}", view.render.type_id());
+            view.render.on_mount();
+        }
+
+        let rep = view.render.render();
+
+        self.view = view;
+
+        update_children(&mut self.children, rep);
+    }
 }
 
 fn update_children(children: &mut Vec<Node>, rep: Rep) {
@@ -54,7 +79,7 @@ fn update_children(children: &mut Vec<Node>, rep: Rep) {
         let child = children.get_mut(index);
         match child {
             Some(child) => {
-                child.update(view.render);
+                child.update_by_view(view);
             }
             None => {
                 children.push(Node::from_view(view.clone()));
