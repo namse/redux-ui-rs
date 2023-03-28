@@ -142,43 +142,75 @@ macro_rules! __rust_force_expr {
     };
 }
 
-macro_rules! render {
-    () => (
-        $crate::__rust_force_expr!($crate::views($crate::vec::Vec::new()))
-    );
-    ($($x:expr),+ $(,)?) => (
-        $crate::__rust_force_expr!($crate::views(
-            Box::new([$($crate::view($x)),+]).to_vec()
-        ))
-    );
+trait IntoRep {
+    fn into_rep(self) -> Rep;
 }
 
-thread_local! {
-    static VIEW_CACHE: Mutex<Vec<View>> = Mutex::new(Vec::new());
+impl<T0> IntoRep for T0
+where
+    T0: Render + 'static,
+{
+    fn into_rep(self) -> Rep {
+        Rep {
+            views: vec![View {
+                render: Box::new(self),
+            }],
+        }
+    }
+}
+
+impl<T0, T1> IntoRep for (T0, T1)
+where
+    T0: Render + 'static,
+    T1: Render + 'static,
+{
+    fn into_rep(self) -> Rep {
+        let (t0, t1) = self;
+        Rep {
+            views: vec![
+                View {
+                    render: Box::new(t0),
+                },
+                View {
+                    render: Box::new(t1),
+                },
+            ],
+        }
+    }
+}
+
+impl<T0, T1, T2> IntoRep for (T0, T1, T2)
+where
+    T0: Render + 'static,
+    T1: Render + 'static,
+    T2: Render + 'static,
+{
+    fn into_rep(self) -> Rep {
+        let (t0, t1, t2) = self;
+        Rep {
+            views: vec![
+                View {
+                    render: Box::new(t0),
+                },
+                View {
+                    render: Box::new(t1),
+                },
+                View {
+                    render: Box::new(t2),
+                },
+            ],
+        }
+    }
+}
+
+fn render(into_rep: impl IntoRep) -> Rep {
+    into_rep.into_rep()
 }
 
 fn view<R: Render + PartialEq + 'static>(render: R) -> View {
-    VIEW_CACHE.with(move |cache| {
-        let mut cache = cache.lock().unwrap();
-        match cache
-            .iter()
-            .find(|cached| cached.render.as_any().downcast_ref() == Some(&render))
-        {
-            Some(cached) => {
-                let view = cached.clone();
-                view
-            }
-            None => {
-                let view = View {
-                    render: Box::new(render),
-                };
-
-                cache.push(view.clone());
-
-                view
-            }
-        }
-    })
+    View {
+        render: Box::new(render),
+    }
 }
 
 #[derive(PartialEq, Clone)]
@@ -288,7 +320,7 @@ impl Render for TodoAppView {
         println!("todos: {:?}", self.todos.len());
         println!("filtered_todos: {:?}", filtered_todos.len());
 
-        render![
+        render((
             TodoListView {
                 todos: filtered_todos,
             },
@@ -296,7 +328,7 @@ impl Render for TodoAppView {
                 visibility_filter: self.visibility_filter,
             },
             self.text_input.clone(),
-        ]
+        ))
     }
     fn on_mount(&self) {
         println!("TodoAppView mounted");
@@ -356,7 +388,6 @@ impl Render for TodoView {
     fn on_unmount(&self) {
         println!("TodoView unmounted");
     }
-
 }
 
 fn text(text: impl ToString) -> Rep {
