@@ -168,11 +168,11 @@ macro_rules! __rust_force_expr {
 }
 
 trait IntoView {
-    fn into_rep(self) -> View;
+    fn into_view(self) -> View;
 }
 
 impl IntoView for () {
-    fn into_rep(self) -> View {
+    fn into_view(self) -> View {
         View::Multiple { views: vec![] }
     }
 }
@@ -181,7 +181,7 @@ impl<T0> IntoView for T0
 where
     T0: Render + 'static,
 {
-    fn into_rep(self) -> View {
+    fn into_view(self) -> View {
         View::Multiple {
             views: vec![View::Single {
                 box_render: Box::new(self),
@@ -195,7 +195,7 @@ where
     T0: Render + 'static,
     T1: Render + 'static,
 {
-    fn into_rep(self) -> View {
+    fn into_view(self) -> View {
         let (t0, t1) = self;
         View::Multiple {
             views: vec![
@@ -216,7 +216,7 @@ where
     T1: Render + 'static,
     T2: Render + 'static,
 {
-    fn into_rep(self) -> View {
+    fn into_view(self) -> View {
         let (t0, t1, t2) = self;
 
         View::Multiple {
@@ -236,7 +236,7 @@ where
 }
 
 impl<T: Render + 'static> IntoView for Vec<T> {
-    fn into_rep(self) -> View {
+    fn into_view(self) -> View {
         View::Multiple {
             views: self
                 .into_iter()
@@ -248,8 +248,8 @@ impl<T: Render + 'static> IntoView for Vec<T> {
     }
 }
 
-fn render(into_rep: impl IntoView) -> View {
-    into_rep.into_rep()
+fn render(into_view: impl IntoView) -> View {
+    into_view.into_view()
 }
 
 #[derive(PartialEq, Clone)]
