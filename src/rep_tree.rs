@@ -9,7 +9,7 @@ impl Node {
     pub fn from_render(render: impl Render + PartialEq + Clone + 'static) -> Self {
         render.on_mount();
 
-        let rep = render.box_clone().render();
+        let rep = render.clone_box().render();
         let view = View {
             render: Box::new(render),
         };
@@ -32,7 +32,7 @@ impl Node {
 
         println!(" # same type id update props");
 
-        let rep = render.box_clone().render();
+        let rep = render.clone_box().render();
 
         self.view = View {
             render: Box::new(render),
@@ -44,7 +44,7 @@ impl Node {
     fn from_view(view: View) -> Self {
         view.render.on_mount();
 
-        let children = rep_to_children(view.render.box_clone().render());
+        let children = rep_to_children(view.render.clone_box().render());
 
         Self { view, children }
     }
@@ -63,7 +63,7 @@ impl Node {
             view.render.on_mount();
         }
 
-        let rep = view.render.box_clone().render();
+        let rep = view.render.clone_box().render();
 
         self.view = view;
 

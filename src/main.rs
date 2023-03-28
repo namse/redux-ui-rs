@@ -88,12 +88,12 @@ pub struct View {
 impl Clone for View {
     fn clone(&self) -> Self {
         View {
-            render: self.render.box_clone(),
+            render: self.render.clone_box(),
         }
     }
 }
 
-pub trait Render: AnyEqual + BoxClone {
+pub trait Render: AnyEqual + CloneBox {
     fn render(self: Box<Self>) -> Rep;
     fn on_mount(&self) {}
     fn on_unmount(&self) {}
@@ -117,13 +117,13 @@ impl<S: 'static + PartialEq> AnyEqual for S {
     }
 }
 
-pub trait BoxClone {
-    fn box_clone(&self) -> Box<dyn Render>;
+pub trait CloneBox {
+    fn clone_box(&self) -> Box<dyn Render>;
 }
 
-impl<S: 'static + Clone + Render> BoxClone for S {
-    fn box_clone(&self) -> Box<dyn Render> {
-        Box::new(self.clone())
+impl<S: 'static + Clone + Render> CloneBox for S {
+    fn clone_box(&self) -> Box<dyn Render> {
+        Box::new(Clone::clone(self))
     }
 }
 
