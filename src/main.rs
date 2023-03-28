@@ -1,9 +1,12 @@
+#![feature(trait_upcasting)]
+
 mod reduce;
 mod rep_tree;
 
 use reduce::Reduce;
 use std::{
     any::Any,
+    fmt::Debug,
     sync::{Arc, Mutex},
 };
 
@@ -36,22 +39,27 @@ fn run<State: Reduce, View: Render + PartialEq + Clone + 'static>(
     to_view: impl Fn(&State) -> View,
 ) {
     let mut rep_tree: Option<rep_tree::Node> = None;
-    let events: Vec<Box<dyn std::any::Any>> = vec![
+    let view = to_view(&state);
+    update_view(&mut rep_tree, view);
+
+    let events: Vec<_> = vec![
         Box::new(TodoEvent::AddTodo {
             text: "Hello".to_string(),
         }),
         Box::new(TodoEvent::AddTodo {
             text: "World".to_string(),
         }),
-        Box::new(1),
-        Box::new(1),
+        Box::new(TodoEvent::Nothing),
+        Box::new(TodoEvent::Nothing),
     ];
     for event in events {
-        let view = to_view(&state);
-        update_view(&mut rep_tree, view);
+        println!("\n\n# event: {:?}", event);
 
         // let event = get_event();
         state = state.reduce(event.as_ref());
+
+        let view = to_view(&state);
+        update_view(&mut rep_tree, view);
     }
 }
 
@@ -76,25 +84,50 @@ fn get_event() -> Box<dyn std::any::Any> {
     })
 }
 
-#[derive(Clone)]
-pub struct Rep {
-    views: Vec<View>,
+pub enum View {
+    Single { box_render: Box<dyn Render> },
+    Multiple { views: Vec<View> },
 }
 
-pub struct View {
-    render: Box<dyn Render>,
+impl View {
+    fn on_mount(&self) {
+        match self {
+            View::Single { box_render } => box_render.on_mount(),
+            View::Multiple { views } => {
+                for view in views {
+                    view.on_mount();
+                }
+            }
+        }
+    }
+    fn on_unmount(&self) {
+        match self {
+            View::Single { box_render } => box_render.on_unmount(),
+            View::Multiple { views } => {
+                for view in views {
+                    view.on_unmount();
+                }
+            }
+        }
+    }
 }
 
 impl Clone for View {
     fn clone(&self) -> Self {
-        View {
-            render: self.render.clone_box(),
+        match self {
+            View::Single { box_render } => View::Single {
+                box_render: box_render.clone_box(),
+            },
+            View::Multiple { views } => View::Multiple {
+                views: views.clone(),
+            },
         }
     }
 }
 
 pub trait Render: AnyEqual + CloneBox {
-    fn render(self: Box<Self>) -> Rep;
+    #[deprecated(note = "Please do not use this method.")]
+    fn render(self: Box<Self>) -> View;
     fn on_mount(&self) {}
     fn on_unmount(&self) {}
 }
@@ -127,14 +160,6 @@ impl<S: 'static + Clone + Render> CloneBox for S {
     }
 }
 
-fn div(children: Vec<View>) -> Rep {
-    Rep { views: children }
-}
-
-fn views(children: Vec<View>) -> Rep {
-    Rep { views: children }
-}
-
 #[macro_export]
 macro_rules! __rust_force_expr {
     ($e:expr) => {
@@ -142,75 +167,89 @@ macro_rules! __rust_force_expr {
     };
 }
 
-trait IntoRep {
-    fn into_rep(self) -> Rep;
+trait IntoView {
+    fn into_rep(self) -> View;
 }
 
-impl<T0> IntoRep for T0
+impl IntoView for () {
+    fn into_rep(self) -> View {
+        View::Multiple { views: vec![] }
+    }
+}
+
+impl<T0> IntoView for T0
 where
     T0: Render + 'static,
 {
-    fn into_rep(self) -> Rep {
-        Rep {
-            views: vec![View {
-                render: Box::new(self),
+    fn into_rep(self) -> View {
+        View::Multiple {
+            views: vec![View::Single {
+                box_render: Box::new(self),
             }],
         }
     }
 }
 
-impl<T0, T1> IntoRep for (T0, T1)
+impl<T0, T1> IntoView for (T0, T1)
 where
     T0: Render + 'static,
     T1: Render + 'static,
 {
-    fn into_rep(self) -> Rep {
+    fn into_rep(self) -> View {
         let (t0, t1) = self;
-        Rep {
+        View::Multiple {
             views: vec![
-                View {
-                    render: Box::new(t0),
+                View::Single {
+                    box_render: Box::new(t0),
                 },
-                View {
-                    render: Box::new(t1),
+                View::Single {
+                    box_render: Box::new(t1),
                 },
             ],
         }
     }
 }
 
-impl<T0, T1, T2> IntoRep for (T0, T1, T2)
+impl<T0, T1, T2> IntoView for (T0, T1, T2)
 where
     T0: Render + 'static,
     T1: Render + 'static,
     T2: Render + 'static,
 {
-    fn into_rep(self) -> Rep {
+    fn into_rep(self) -> View {
         let (t0, t1, t2) = self;
-        Rep {
+
+        View::Multiple {
             views: vec![
-                View {
-                    render: Box::new(t0),
+                View::Single {
+                    box_render: Box::new(t0),
                 },
-                View {
-                    render: Box::new(t1),
+                View::Single {
+                    box_render: Box::new(t1),
                 },
-                View {
-                    render: Box::new(t2),
+                View::Single {
+                    box_render: Box::new(t2),
                 },
             ],
         }
     }
 }
 
-fn render(into_rep: impl IntoRep) -> Rep {
-    into_rep.into_rep()
+impl<T: Render + 'static> IntoView for Vec<T> {
+    fn into_rep(self) -> View {
+        View::Multiple {
+            views: self
+                .into_iter()
+                .map(|t| View::Single {
+                    box_render: Box::new(t),
+                })
+                .collect(),
+        }
+    }
 }
 
-fn view<R: Render + PartialEq + 'static>(render: R) -> View {
-    View {
-        render: Box::new(render),
-    }
+fn render(into_rep: impl IntoView) -> View {
+    into_rep.into_rep()
 }
 
 #[derive(PartialEq, Clone)]
@@ -222,9 +261,11 @@ struct TodoState {
     todos: Vec<Todo>,
 }
 
+#[derive(PartialEq, Debug)]
 enum TodoEvent {
     AddTodo { text: String },
     ToggleTodo { index: usize },
+    Nothing,
 }
 
 impl Reduce for TodoState {
@@ -233,6 +274,7 @@ impl Reduce for TodoState {
             match event {
                 TodoEvent::AddTodo { text } => {
                     println!("Add todo: {}", text);
+                    self.todos.last_mut().map(|todo| todo.text += "1");
                     self.todos.push(Todo {
                         text: text.clone(),
                         completed: false,
@@ -241,6 +283,7 @@ impl Reduce for TodoState {
                 TodoEvent::ToggleTodo { index } => {
                     self.todos[*index].completed = !self.todos[*index].completed;
                 }
+                TodoEvent::Nothing => {}
             }
         }
 
@@ -276,8 +319,8 @@ mod text_input {
     pub struct View {}
 
     impl Render for View {
-        fn render(self: Box<Self>) -> Rep {
-            div(vec![])
+        fn render(self: Box<Self>) -> super::View {
+            render(())
         }
     }
 }
@@ -306,7 +349,8 @@ struct TodoAppView {
 }
 
 impl Render for TodoAppView {
-    fn render(self: Box<Self>) -> Rep {
+    fn render(self: Box<Self>) -> View {
+        println!("TodoAppView render called");
         let filtered_todos = self
             .todos
             .iter()
@@ -327,7 +371,7 @@ impl Render for TodoAppView {
             VisibilityFilterView {
                 visibility_filter: self.visibility_filter,
             },
-            self.text_input.clone(),
+            self.text_input,
         ))
     }
     fn on_mount(&self) {
@@ -343,20 +387,20 @@ struct TodoListView {
 }
 
 impl Render for TodoListView {
-    fn render(self: Box<Self>) -> Rep {
+    fn render(self: Box<Self>) -> View {
         let mut elements = vec![];
 
         for (index, todo) in self.todos.iter().enumerate() {
-            elements.push(view(TodoView {
+            elements.push(TodoView {
                 text: todo.text.clone(),
                 completed: todo.completed,
                 index,
-            }));
+            });
         }
 
         println!("TodoListView rendered: {} todos", elements.len());
 
-        div(elements)
+        render(elements)
     }
     fn on_mount(&self) {
         println!("TodoListView mounted");
@@ -374,7 +418,7 @@ struct TodoView {
 }
 
 impl Render for TodoView {
-    fn render(self: Box<Self>) -> Rep {
+    fn render(self: Box<Self>) -> View {
         text(&self.text).event(|build| {
             let index = self.index;
             build.on_click_fn(move |_| Some(TodoEvent::ToggleTodo { index }));
@@ -390,14 +434,14 @@ impl Render for TodoView {
     }
 }
 
-fn text(text: impl ToString) -> Rep {
+fn text(text: impl ToString) -> View {
     println!("text: {:?}", text.to_string());
-    div(vec![])
+    render(())
 }
 
-impl Rep {
-    fn event(self, build: impl FnOnce(&mut EventBuilder)) -> Rep {
-        div(vec![])
+impl View {
+    fn event(self, build: impl FnOnce(&mut EventBuilder)) -> View {
+        render(())
     }
 }
 
@@ -423,8 +467,8 @@ struct VisibilityFilterView {
 }
 
 impl Render for VisibilityFilterView {
-    fn render(self: Box<Self>) -> Rep {
-        div(vec![])
+    fn render(self: Box<Self>) -> View {
+        render(())
     }
 }
 
