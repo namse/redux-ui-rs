@@ -1,249 +1,34 @@
 mod reduce;
+mod render;
 mod rep_tree;
+mod start;
 
 use reduce::Reduce;
+use render::{render, Element, Render};
+use start::start;
 use std::{any::Any, fmt::Debug};
 
 fn main() {
-    let app_state = TodoAppState {
-        text_input: text_input::State::new(),
-        todos: TodoState { todos: vec![] },
-        visibility_filter: VisibilityFilterState {
-            visibility_filter: VisibilityFilter::ShowAll,
+    start(
+        TodoAppModel {
+            text_input: text_input::Model::new(),
+            todos: TodoModel { todos: vec![] },
+            visibility_filter: VisibilityFilterModel {
+                visibility_filter: VisibilityFilter::ShowAll,
+            },
         },
-    };
-
-    run(app_state, |app_state| {
-        let TodoAppState {
-            todos,
-            visibility_filter,
-            text_input,
-        } = app_state;
-
-        TodoAppView {
-            todos: todos.todos.clone(),
-            visibility_filter: visibility_filter.visibility_filter,
-            text_input: text_input.map_to_view(),
-        }
-    })
-}
-
-fn run<State: Reduce, View: Render + PartialEq + Clone + 'static>(
-    mut state: State,
-    to_view: impl Fn(&State) -> View,
-) {
-    let mut rep_tree: Option<rep_tree::Node> = None;
-    let view = to_view(&state);
-    update_view(&mut rep_tree, view);
-
-    let events: Vec<_> = vec![
-        Box::new(TodoEvent::AddTodo {
-            text: "Hello".to_string(),
-        }),
-        Box::new(TodoEvent::AddTodo {
-            text: "World".to_string(),
-        }),
-        Box::new(TodoEvent::Nothing),
-        Box::new(TodoEvent::Nothing),
-    ];
-    for event in events {
-        println!("\n\n# event: {:?}", event);
-
-        // let event = get_event();
-        state = state.reduce(event.as_ref());
-
-        let view = to_view(&state);
-        update_view(&mut rep_tree, view);
-    }
-}
-
-fn update_view(
-    rep_tree: &mut Option<rep_tree::Node>,
-    view: impl Render + PartialEq + Clone + 'static,
-) {
-    println!("update_view");
-    match rep_tree.as_mut() {
-        Some(rep_tree) => {
-            rep_tree.update(view);
-        }
-        None => {
-            *rep_tree = Some(rep_tree::Node::from_render(view));
-        }
-    }
-}
-
-fn get_event() -> Box<dyn std::any::Any> {
-    Box::new(TodoEvent::AddTodo {
-        text: "Hello".to_string(),
-    })
-}
-
-pub enum View {
-    Single { box_render: Box<dyn Render> },
-    Multiple { views: Vec<View> },
-}
-
-impl View {
-    fn on_mount(&self) {
-        match self {
-            View::Single { box_render } => box_render.on_mount(),
-            View::Multiple { views } => {
-                for view in views {
-                    view.on_mount();
-                }
+        |TodoAppModel {
+             todos,
+             visibility_filter,
+             text_input,
+         }| {
+            TodoAppView {
+                todos: todos.todos.clone(),
+                visibility_filter: visibility_filter.visibility_filter,
+                text_input: text_input.map_to_view(),
             }
-        }
-    }
-    fn on_unmount(&self) {
-        match self {
-            View::Single { box_render } => box_render.on_unmount(),
-            View::Multiple { views } => {
-                for view in views {
-                    view.on_unmount();
-                }
-            }
-        }
-    }
-}
-
-impl Clone for View {
-    fn clone(&self) -> Self {
-        match self {
-            View::Single { box_render } => View::Single {
-                box_render: box_render.clone_box(),
-            },
-            View::Multiple { views } => View::Multiple {
-                views: views.clone(),
-            },
-        }
-    }
-}
-
-pub trait Render: AnyEqual + CloneBox {
-    #[deprecated(note = "Please do not use this method.")]
-    fn render(self: Box<Self>) -> View;
-    fn on_mount(&self) {}
-    fn on_unmount(&self) {}
-}
-
-pub trait AnyEqual {
-    fn as_any(&self) -> &dyn Any;
-    fn equals(&self, _: &dyn Render) -> bool;
-}
-
-impl<S: 'static + PartialEq> AnyEqual for S {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn equals(&self, other: &dyn Render) -> bool {
-        other
-            .as_any()
-            .downcast_ref::<S>()
-            .map_or(false, |a| self == a)
-    }
-}
-
-pub trait CloneBox {
-    fn clone_box(&self) -> Box<dyn Render>;
-}
-
-impl<S: 'static + Clone + Render> CloneBox for S {
-    fn clone_box(&self) -> Box<dyn Render> {
-        Box::new(Clone::clone(self))
-    }
-}
-
-#[macro_export]
-macro_rules! __rust_force_expr {
-    ($e:expr) => {
-        $e
-    };
-}
-
-trait IntoView {
-    fn into_view(self) -> View;
-}
-
-impl IntoView for () {
-    fn into_view(self) -> View {
-        View::Multiple { views: vec![] }
-    }
-}
-
-impl<T0> IntoView for T0
-where
-    T0: Render + 'static,
-{
-    fn into_view(self) -> View {
-        View::Multiple {
-            views: vec![View::Single {
-                box_render: Box::new(self),
-            }],
-        }
-    }
-}
-
-impl<T0, T1> IntoView for (T0, T1)
-where
-    T0: Render + 'static,
-    T1: Render + 'static,
-{
-    fn into_view(self) -> View {
-        let (t0, t1) = self;
-        View::Multiple {
-            views: vec![
-                View::Single {
-                    box_render: Box::new(t0),
-                },
-                View::Single {
-                    box_render: Box::new(t1),
-                },
-            ],
-        }
-    }
-}
-
-impl<T0, T1, T2> IntoView for (T0, T1, T2)
-where
-    T0: Render + 'static,
-    T1: Render + 'static,
-    T2: Render + 'static,
-{
-    fn into_view(self) -> View {
-        let (t0, t1, t2) = self;
-
-        View::Multiple {
-            views: vec![
-                View::Single {
-                    box_render: Box::new(t0),
-                },
-                View::Single {
-                    box_render: Box::new(t1),
-                },
-                View::Single {
-                    box_render: Box::new(t2),
-                },
-            ],
-        }
-    }
-}
-
-impl<T: Render + 'static> IntoView for Vec<T> {
-    fn into_view(self) -> View {
-        View::Multiple {
-            views: self
-                .into_iter()
-                .map(|t| View::Single {
-                    box_render: Box::new(t),
-                })
-                .collect(),
-        }
-    }
-}
-
-fn render(into_view: impl IntoView) -> View {
-    into_view.into_view()
+        },
+    )
 }
 
 #[derive(PartialEq, Clone)]
@@ -251,7 +36,7 @@ struct Todo {
     text: String,
     completed: bool,
 }
-struct TodoState {
+struct TodoModel {
     todos: Vec<Todo>,
 }
 
@@ -262,7 +47,7 @@ enum TodoEvent {
     Nothing,
 }
 
-impl Reduce for TodoState {
+impl Reduce for TodoModel {
     fn reduce(mut self, event: &dyn std::any::Any) -> Self {
         if let Some(event) = event.downcast_ref::<TodoEvent>() {
             match event {
@@ -287,9 +72,9 @@ impl Reduce for TodoState {
 
 mod text_input {
     use super::*;
-    pub struct State {}
+    pub struct Model {}
 
-    impl State {
+    impl Model {
         pub fn new() -> Self {
             Self {}
         }
@@ -300,8 +85,9 @@ mod text_input {
 
     pub enum Event {}
 
-    impl super::Reduce for State {
+    impl super::Reduce for Model {
         fn reduce(self, event: &dyn std::any::Any) -> Self {
+            #[allow(unused_variables)]
             if let Some(event) = event.downcast_ref::<Event>() {
                 todo!()
             } else {
@@ -313,21 +99,21 @@ mod text_input {
     pub struct View {}
 
     impl Render for View {
-        fn render(self: Box<Self>) -> super::View {
+        fn render(self: Box<Self>) -> super::Element {
             render(())
         }
     }
 }
 
-struct TodoAppState {
-    todos: TodoState,
-    visibility_filter: VisibilityFilterState,
-    text_input: text_input::State,
+struct TodoAppModel {
+    todos: TodoModel,
+    visibility_filter: VisibilityFilterModel,
+    text_input: text_input::Model,
 }
 
-impl Reduce for TodoAppState {
+impl Reduce for TodoAppModel {
     fn reduce(self, event: &dyn std::any::Any) -> Self {
-        TodoAppState {
+        TodoAppModel {
             todos: self.todos.reduce(event),
             visibility_filter: self.visibility_filter.reduce(event),
             text_input: self.text_input.reduce(event),
@@ -343,7 +129,7 @@ struct TodoAppView {
 }
 
 impl Render for TodoAppView {
-    fn render(self: Box<Self>) -> View {
+    fn render(self: Box<Self>) -> Element {
         println!("TodoAppView render called");
         let filtered_todos = self
             .todos
@@ -381,7 +167,7 @@ struct TodoListView {
 }
 
 impl Render for TodoListView {
-    fn render(self: Box<Self>) -> View {
+    fn render(self: Box<Self>) -> Element {
         let mut elements = vec![];
 
         for (index, todo) in self.todos.iter().enumerate() {
@@ -412,7 +198,7 @@ struct TodoView {
 }
 
 impl Render for TodoView {
-    fn render(self: Box<Self>) -> View {
+    fn render(self: Box<Self>) -> Element {
         text(&self.text).event(|build| {
             let index = self.index;
             build.on_click_fn(move |_| Some(TodoEvent::ToggleTodo { index }));
@@ -428,32 +214,10 @@ impl Render for TodoView {
     }
 }
 
-fn text(text: impl ToString) -> View {
+fn text(text: impl ToString) -> Element {
     println!("text: {:?}", text.to_string());
     render(())
 }
-
-impl View {
-    fn event(self, build: impl FnOnce(&mut EventBuilder)) -> View {
-        render(())
-    }
-}
-
-struct EventBuilder {}
-
-impl EventBuilder {
-    fn on_click_fn<Event: std::any::Any>(
-        &mut self,
-        handler: impl Fn(ClickEvent) -> Option<Event> + 'static,
-    ) -> Self {
-        todo!()
-    }
-    fn on_click<Event: std::any::Any>(&mut self, event: Event) -> Self {
-        todo!()
-    }
-}
-
-struct ClickEvent {}
 
 #[derive(PartialEq, Clone)]
 struct VisibilityFilterView {
@@ -461,7 +225,7 @@ struct VisibilityFilterView {
 }
 
 impl Render for VisibilityFilterView {
-    fn render(self: Box<Self>) -> View {
+    fn render(self: Box<Self>) -> Element {
         render(())
     }
 }
@@ -472,7 +236,7 @@ enum VisibilityFilter {
     ShowCompleted,
 }
 
-struct VisibilityFilterState {
+struct VisibilityFilterModel {
     visibility_filter: VisibilityFilter,
 }
 
@@ -480,12 +244,12 @@ enum VisibilityFilterEvent {
     SetVisibilityFilter(VisibilityFilter),
 }
 
-impl Reduce for VisibilityFilterState {
+impl Reduce for VisibilityFilterModel {
     fn reduce(self, event: &dyn std::any::Any) -> Self {
         if let Some(event) = event.downcast_ref::<VisibilityFilterEvent>() {
             match event {
                 VisibilityFilterEvent::SetVisibilityFilter(visibility_filter) => {
-                    VisibilityFilterState {
+                    VisibilityFilterModel {
                         visibility_filter: *visibility_filter,
                     }
                 }
