@@ -207,3 +207,8 @@ fn render_to_children(render: Box<dyn Render>) -> Vec<Node> {
         .map(|view| Node::from_view(view))
         .collect()
 }
+
+// fn test(render: Box<dyn Render>) {
+//     testa(&render);
+// }
+// fn testa(render: &dyn AnyEqual) {}

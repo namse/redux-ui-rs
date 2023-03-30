@@ -1,14 +1,8 @@
-#![feature(trait_upcasting)]
-
 mod reduce;
 mod rep_tree;
 
 use reduce::Reduce;
-use std::{
-    any::Any,
-    fmt::Debug,
-    sync::{Arc, Mutex},
-};
+use std::{any::Any, fmt::Debug};
 
 fn main() {
     let app_state = TodoAppState {
@@ -134,7 +128,7 @@ pub trait Render: AnyEqual + CloneBox {
 
 pub trait AnyEqual {
     fn as_any(&self) -> &dyn Any;
-    fn equals(&self, _: &dyn AnyEqual) -> bool;
+    fn equals(&self, _: &dyn Render) -> bool;
 }
 
 impl<S: 'static + PartialEq> AnyEqual for S {
@@ -142,7 +136,7 @@ impl<S: 'static + PartialEq> AnyEqual for S {
         self
     }
 
-    fn equals(&self, other: &dyn AnyEqual) -> bool {
+    fn equals(&self, other: &dyn Render) -> bool {
         other
             .as_any()
             .downcast_ref::<S>()
