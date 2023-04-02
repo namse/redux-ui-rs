@@ -28,8 +28,12 @@ pub async fn start_dom<Model: Reduce, View: Render + PartialEq + Clone + 'static
                 .dyn_into::<web_sys::HtmlLiElement>()
                 .unwrap();
 
+            // TODO: Set style
+
             let parent = find_dom_parent(&ancestors).unwrap_or_else(|| root.clone());
             parent.append_child(&li_element).unwrap();
+
+            *node.platform_data.lock().unwrap() = Some(Box::new(li_element));
         }
     };
     crate::start(model, to_view, &on_mount).await;
