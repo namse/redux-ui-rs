@@ -53,7 +53,3 @@ pub fn on_click(event: impl std::any::Any + Clone + PartialEq) -> OnClick {
         event: Box::new(event),
     }
 }
-
-fn current_parent_element() -> HtmlElement {
-    todo!()
-}

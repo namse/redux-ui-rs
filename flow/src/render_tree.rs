@@ -1,77 +1,127 @@
 use super::*;
-use std::any::Any;
+use std::{
+    any::Any,
+    sync::{Arc, Mutex},
+};
 
-pub enum Node {
-    Single {
-        box_render: Box<dyn Render>,
-        children: Vec<Node>,
-    },
-    Multiple {
-        nodes: Vec<Node>,
-    },
+pub struct Node {
+    pub box_render: Box<dyn Render>,
+    pub platform_data: Arc<Mutex<Option<Box<dyn Any>>>>,
 }
 
 impl Node {
+    fn on_mount(&self) {
+        self.box_render.on_mount();
+    }
+    fn on_unmount(&self) {
+        self.box_render.on_unmount();
+    }
+}
+
+pub enum RenderTree {
+    Single {
+        node: Node,
+        children: Vec<RenderTree>,
+    },
+    Multiple {
+        nodes: Vec<RenderTree>,
+    },
+}
+
+impl RenderTree {
     pub fn from_render(
         render: impl Render + PartialEq + Clone + 'static,
-        on_mount: impl Fn(&dyn Render, Vec<&dyn Render>),
-    ) -> Self {
-        let mut ancestors: Vec<&dyn Render> = vec![];
+        on_mount: &dyn Fn(&Node, &Vec<&Node>),
+    ) -> RenderTree {
         render.on_mount();
-        on_mount(&render, &mut ancestors);
 
-        ancestors.push(&render);
+        let mut node = Node {
+            box_render: Box::new(render),
+            platform_data: Arc::new(Mutex::new(None)),
+        };
+
+        on_mount(&node, &vec![]);
 
         let mut children = vec![];
-        update_children(&mut children, render.clone_box(), &mut ancestors);
+        update_children(
+            &mut children,
+            node.box_render.clone_box(),
+            &on_mount,
+            &vec![&node],
+        );
 
-        Self::Single {
-            box_render: Box::new(render),
-            children,
-        }
+        RenderTree::Single { node, children }
     }
 
     pub fn update(
         &mut self,
         render: impl Render + PartialEq + Clone + 'static,
-        on_mount: impl Fn(&dyn Render, Option<&dyn Render>),
+        on_mount: &dyn Fn(&Node, &Vec<&Node>),
     ) {
-        let Self::Single{ box_render, children } = self else {
+        let Self::Single{ node, children } = self else {
             unreachable!()
         };
-        if box_render.as_any().downcast_ref() == Some(&render) {
-            println!(" # same props");
+        if node.box_render.as_any().downcast_ref() == Some(&render) {
+            crate::log!(" # same props");
             return;
         }
 
-        if box_render.as_any().type_id() != render.type_id() {
-            println!(" # different type id");
-            render.on_mount();
+        if node.box_render.as_any().type_id() != render.type_id() {
+            crate::log!(" # different type id");
+            *node = Node {
+                box_render: Box::new(render),
+                platform_data: Arc::new(Mutex::new(None)),
+            };
+            node.on_mount();
+            on_mount(&node, &vec![]);
+        } else {
+            crate::log!(" # same type id update props");
+            node.box_render = render.clone_box();
         }
 
-        println!(" # same type id update props");
-
-        *box_render = render.clone_box();
-
-        update_children(children, Box::new(render));
+        update_children(
+            children,
+            node.box_render.clone_box(),
+            &on_mount,
+            &vec![&node],
+        );
     }
 
-    fn from_element(element: Element) -> Self {
+    fn from_element<'a>(
+        element: Element,
+        on_mount: &dyn Fn(&Node, &Vec<&Node>),
+        ancestors: &Vec<&Node>,
+    ) -> Self {
         element.on_mount();
 
         match element {
             Element::Single { box_render } => {
-                let children = render_to_children(box_render.clone_box());
+                let node = Node {
+                    box_render,
+                    platform_data: Arc::new(Mutex::new(None)),
+                };
+                on_mount(&node, &ancestors);
+                let children = {
+                    render_to_children(
+                        node.box_render.clone_box(),
+                        &on_mount,
+                        &ancestors
+                            .clone()
+                            .into_iter()
+                            .chain(std::iter::once::<&Node>(&node))
+                            .collect(),
+                    )
+                };
 
                 Self::Single {
-                    box_render,
+                    node,
                     children,
                 }
             }
             Element::Multiple { elements } => {
                 let nodes = elements
                     .into_iter()
-                    .map(|element| Node::from_element(element))
+                    .map(|element| RenderTree::from_element(element, &on_mount, ancestors))
                     .collect();
 
                 Self::Multiple { nodes }
@@ -79,62 +129,95 @@ impl Node {
         }
     }
 
-    fn update_by_element(&mut self, element: Element) {
+    fn update_by_element<'a>(
+        &mut self,
+        element: Element,
+        on_mount: &dyn Fn(&Node, &Vec<&Node>),
+        ancestors: &Vec<&Node>,
+    ) {
         match (&self, element) {
             (
-                Node::Single {
-                    box_render,
+                RenderTree::Single {
+                    node,
                     children: _,
                 },
                 Element::Single {
                     box_render: element_box_render,
                 },
             ) => {
-                if box_render.equals(element_box_render.as_ref()) {
-                    println!(" # same props");
+                if node.box_render.equals(element_box_render.as_ref()) {
+                    crate::log!(" # same props");
                     return;
                 }
 
-                if box_render.as_any().type_id() != element_box_render.as_any().type_id() {
-                    println!(" # different type id");
-                    self.on_unmount();
-                    element_box_render.on_mount();
-                }
-                println!(" # same type id update props");
-
-                let Node::Single {
-                    box_render,
+                let RenderTree::Single {
+                    node,
                     children,
                 } = self else {
                     unreachable!()
                 };
 
-                *box_render = element_box_render.clone_box();
-                update_children(children, element_box_render);
+                if node.box_render.as_any().type_id() != element_box_render.as_any().type_id() {
+                    crate::log!(" # different type id");
+                    node.on_unmount();
+                    
+                    *node = Node {
+                        box_render: element_box_render.clone_box(),
+                        platform_data: Arc::new(Mutex::new(None)),
+                    };
+                    node.on_mount();
+                    on_mount(&node, &ancestors);
+                } else {
+                    crate::log!(" # same type id update props");
+                    node.box_render = element_box_render.clone_box();
+                }
+
+                update_children(
+                    children,
+                    element_box_render,
+                    on_mount,
+                    &ancestors
+                        .clone()
+                        .into_iter()
+                        .chain(std::iter::once::<&Node>(&node))
+                        .collect(),
+                );
             }
-            (Node::Single { .. }, Element::Multiple { elements }) => {
+            (RenderTree::Single { .. }, Element::Multiple { elements }) => {
                 self.on_unmount();
 
                 let nodes = elements
                     .into_iter()
-                    .map(|element| Node::from_element(element))
+                    .map(|element| RenderTree::from_element(element, on_mount, ancestors))
                     .collect();
 
-                *self = Node::Multiple { nodes };
+                *self = RenderTree::Multiple { nodes };
             }
-            (Node::Multiple { nodes: _ }, Element::Single { box_render }) => {
+            (RenderTree::Multiple { nodes: _ }, Element::Single { box_render }) => {
                 self.on_unmount();
-                box_render.on_mount();
-
-                let children = render_to_children(box_render.clone_box());
-
-                *self = Node::Single {
+                let node = Node {
                     box_render,
-                    children,
+                    platform_data: Arc::new(Mutex::new(None)),
                 };
+                node.on_mount();
+                on_mount(&node, &ancestors);
+
+                let children = {
+                    render_to_children(
+                        node.box_render.clone_box(),
+                        on_mount,
+                        &ancestors
+                            .clone()
+                            .into_iter()
+                            .chain(std::iter::once::<&Node>(&node))
+                            .collect(),
+                    )
+                };
+
+                *self = RenderTree::Single { node, children };
             }
-            (Node::Multiple { .. }, Element::Multiple { elements }) => {
-                let Node::Multiple { nodes } = self else {
+            (RenderTree::Multiple { .. }, Element::Multiple { elements }) => {
+                let RenderTree::Multiple { nodes } = self else {
                     unreachable!()
                 };
 
@@ -144,10 +227,10 @@ impl Node {
                     let node = nodes.get_mut(index);
                     match node {
                         Some(node) => {
-                            node.update_by_element(element);
+                            node.update_by_element(element, on_mount, ancestors);
                         }
                         None => {
-                            nodes.push(Node::from_element(element));
+                            nodes.push(RenderTree::from_element(element, on_mount, ancestors));
                         }
                     }
                 }
@@ -162,16 +245,13 @@ impl Node {
 
     fn on_unmount(&self) {
         match self {
-            Node::Single {
-                box_render,
-                children,
-            } => {
+            RenderTree::Single { node, children } => {
                 for child in children {
                     child.on_unmount();
                 }
-                box_render.on_unmount();
+                node.on_unmount();
             }
-            Node::Multiple { nodes } => {
+            RenderTree::Multiple { nodes } => {
                 for node in nodes {
                     node.on_unmount();
                 }
@@ -180,7 +260,12 @@ impl Node {
     }
 }
 
-fn update_children(children: &mut Vec<Node>, render: Box<dyn Render>) {
+fn update_children<'a>(
+    children: &mut Vec<RenderTree>,
+    render: Box<dyn Render>,
+    on_mount: &dyn Fn(&Node, &Vec<&Node>),
+    ancestors: &Vec<&Node>,
+) {
     #[allow(deprecated)]
     let elements: Vec<Element> = render_to_elements(render);
 
@@ -190,10 +275,10 @@ fn update_children(children: &mut Vec<Node>, render: Box<dyn Render>) {
         let child = children.get_mut(index);
         match child {
             Some(child) => {
-                child.update_by_element(element);
+                child.update_by_element(element, on_mount, ancestors);
             }
             None => {
-                children.push(Node::from_element(element));
+                children.push(RenderTree::from_element(element, on_mount, ancestors));
             }
         }
     }
@@ -212,15 +297,14 @@ fn render_to_elements(render: Box<dyn Render>) -> Vec<Element> {
     }
 }
 
-fn render_to_children(render: Box<dyn Render>) -> Vec<Node> {
+fn render_to_children<'a>(
+    render: Box<dyn Render>,
+    on_mount: &dyn Fn(&Node, &Vec<&Node>),
+    ancestors: &Vec<&Node>,
+) -> Vec<RenderTree> {
     let elements = render_to_elements(render);
     elements
         .into_iter()
-        .map(|element| Node::from_element(element))
+        .map(|element| RenderTree::from_element(element, on_mount, ancestors))
         .collect()
 }
-
-// fn test(render: Box<dyn Render>) {
-//     testa(&render);
-// }
-// fn testa(render: &dyn AnyEqual) {}
