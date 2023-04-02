@@ -4,6 +4,12 @@ pub trait IntoElement {
     fn into_element(self) -> Element;
 }
 
+impl IntoElement for Element {
+    fn into_element(self) -> Element {
+        self
+    }
+}
+
 impl IntoElement for () {
     fn into_element(self) -> Element {
         Element::Multiple { elements: vec![] }

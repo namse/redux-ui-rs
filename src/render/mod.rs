@@ -2,7 +2,7 @@ mod element;
 mod into_element;
 
 pub use element::Element;
-use into_element::IntoElement;
+pub use into_element::IntoElement;
 use std::any::Any;
 
 pub trait Render: AnyEqual + CloneBox {

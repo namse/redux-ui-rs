@@ -41,6 +41,21 @@ impl Clone for Element {
         }
     }
 }
+
+impl PartialEq for Element {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Element::Single { box_render }, Element::Single { box_render: other }) => {
+                box_render.equals(other.as_ref())
+            }
+            (Element::Multiple { elements }, Element::Multiple { elements: other }) => {
+                elements == other
+            }
+            _ => false,
+        }
+    }
+}
+
 impl Element {
     pub fn event(self, build: impl FnOnce(&mut EventBuilder)) -> Element {
         render(())

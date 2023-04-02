@@ -1,52 +1,41 @@
 use crate::*;
 
-pub fn start<Model: Reduce, View: Render + PartialEq + Clone + 'static>(
+pub async fn start<Model: Reduce, View: Render + PartialEq + Clone + 'static>(
     mut model: Model,
     to_view: impl Fn(&Model) -> View,
+    on_mount: impl Fn(&dyn Render, Option<&dyn Render>),
 ) {
-    let mut rep_tree: Option<rep_tree::Node> = None;
+    let mut render_tree: Option<render_tree::Node> = None;
     let view = to_view(&model);
-    update_view(&mut rep_tree, view);
+    update_view(&mut render_tree, view, on_mount);
 
-    let events: Vec<_> = vec![
-        Box::new(TodoEvent::AddTodo {
-            text: "Hello".to_string(),
-        }),
-        Box::new(TodoEvent::AddTodo {
-            text: "World".to_string(),
-        }),
-        Box::new(TodoEvent::Nothing),
-        Box::new(TodoEvent::Nothing),
-    ];
-    for event in events {
-        println!("\n\n# event: {:?}", event);
+    // loop {
+    //     let event = get_event().await;
+    //     println!("\n\n# event: {:?}", event);
 
-        // let event = get_event();
-        model = model.reduce(event.as_ref());
+    //     model = model.reduce(event.as_ref());
 
-        let view = to_view(&model);
-        update_view(&mut rep_tree, view);
-    }
+    //     let view = to_view(&model);
+    //     update_view(&mut render_tree, view);
+    // }
 }
 
 fn update_view(
-    rep_tree: &mut Option<rep_tree::Node>,
+    render_tree: &mut Option<render_tree::Node>,
     view: impl Render + PartialEq + Clone + 'static,
+    on_mount: impl Fn(&dyn Render, Option<&dyn Render>),
 ) {
     println!("update_view");
-    match rep_tree.as_mut() {
-        Some(rep_tree) => {
-            rep_tree.update(view);
+    match render_tree.as_mut() {
+        Some(render_tree) => {
+            render_tree.update(view, on_mount);
         }
         None => {
-            *rep_tree = Some(rep_tree::Node::from_render(view));
+            *render_tree = Some(render_tree::Node::from_render(view, on_mount));
         }
     }
 }
 
-#[allow(dead_code)]
-fn get_event() -> Box<dyn std::any::Any> {
-    Box::new(TodoEvent::AddTodo {
-        text: "Hello".to_string(),
-    })
+async fn get_event() -> Box<dyn std::any::Any> {
+    Box::new(())
 }

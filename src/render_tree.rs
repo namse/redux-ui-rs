@@ -1,4 +1,5 @@
 use super::*;
+use std::any::Any;
 
 pub enum Node {
     Single {
@@ -11,11 +12,18 @@ pub enum Node {
 }
 
 impl Node {
-    pub fn from_render(render: impl Render + PartialEq + Clone + 'static) -> Self {
+    pub fn from_render(
+        render: impl Render + PartialEq + Clone + 'static,
+        on_mount: impl Fn(&dyn Render, Vec<&dyn Render>),
+    ) -> Self {
+        let mut ancestors: Vec<&dyn Render> = vec![];
         render.on_mount();
+        on_mount(&render, &mut ancestors);
+
+        ancestors.push(&render);
 
         let mut children = vec![];
-        update_children(&mut children, render.clone_box());
+        update_children(&mut children, render.clone_box(), &mut ancestors);
 
         Self::Single {
             box_render: Box::new(render),
@@ -23,7 +31,11 @@ impl Node {
         }
     }
 
-    pub fn update(&mut self, render: impl Render + PartialEq + Clone + 'static) {
+    pub fn update(
+        &mut self,
+        render: impl Render + PartialEq + Clone + 'static,
+        on_mount: impl Fn(&dyn Render, Option<&dyn Render>),
+    ) {
         let Self::Single{ box_render, children } = self else {
             unreachable!()
         };
